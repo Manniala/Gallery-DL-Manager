@@ -21,7 +21,7 @@ if %ERRORLEVEL%==0 (
   )
 )
 
-set "MAIN=gallery_dl_manager_v1_0.py"
+set "MAIN=gallery_dl_manager.py"
 if not exist "%MAIN%" (
   echo Could not find %MAIN% in "%CD%"
   echo Make sure this .bat sits next to %MAIN%.
@@ -29,7 +29,7 @@ if not exist "%MAIN%" (
   exit /b 1
 )
 
-title Gallery-DL Manager v1.0
+title Gallery-DL Manager
 echo Starting Gallery-DL Manager...
 "%PY%" "%MAIN%"
 set EC=%ERRORLEVEL%

@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Gallery-DL Manager v1.0
-- Ctrl+C handler with [A]bort / [S]kip / [C]ontinue (no batch "Terminate" prompt)
-- Settings menu: color on/off toggle + per-site config
-- CMD title updates during downloads
-- Seed defaults for new sites: delay=30s, base_sleep=1s, jitter=±1s
-- Robust version check (matches interpreter; explicit command/path override)
-- Normalize args; strip --sleep when Base Sleep is set; filter numeric lines
-- Health checks, backups, run stats, link builder, MG_DEBUG=1 echo
+Gallery-DL Manager v1.0.1
+- NEW: Theme support (default, bright, high_contrast, mono) + persisted in config
+- Settings menu: pick theme and toggle color on/off
+- All v1.0 features retained: Ctrl+C Abort/Skip/Continue, CMD titles, defaults, updater, etc.
 """
 
 from __future__ import annotations
@@ -17,18 +13,49 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 
 APP_NAME = "Gallery-DL Manager"
-APP_VERSION = "v1.0"
+APP_VERSION = "v1.0.1"
 
-# ----------------------------- COLORS & UI ---------------------------------
-RESET="\033[0m"; CYAN="\033[36m"; YELLOW="\033[33m"; GREEN="\033[32m"; RED="\033[31m"; MAGENTA="\033[35m"; WHITE="\033[97m"; BLUE="\033[34m"
-USE_COLOR=True  # will be overridden by app-settings.json
+# ----------------------------- THEMES & UI ---------------------------------
+THEMES = {
+    "default": {
+        "RESET":"\033[0m","CYAN":"\033[36m","YELLOW":"\033[33m","GREEN":"\033[32m",
+        "RED":"\033[31m","MAGENTA":"\033[35m","WHITE":"\033[97m","BLUE":"\033[34m",
+        "TITLE":"\033[36m",
+    },
+    "bright": {
+        "RESET":"\033[0m","CYAN":"\033[96m","YELLOW":"\033[33m","GREEN":"\033[92m",
+        "RED":"\033[31m","MAGENTA":"\033[95m","WHITE":"\033[97m","BLUE":"\033[94m",
+        "TITLE":"\033[33m",
+    },
+    "high_contrast": {
+        "RESET":"\033[0m","CYAN":"\033[96m","YELLOW":"\033[33m","GREEN":"\033[92m",
+        "RED":"\033[91m","MAGENTA":"\033[95m","WHITE":"\033[97m","BLUE":"\033[94m",
+        "TITLE":"\033[97m",
+    },
+    "mono": {
+        "RESET":"\033[0m","CYAN":"\033[0m","YELLOW":"\033[0m","GREEN":"\033[0m",
+        "RED":"\033[0m","MAGENTA":"\033[0m","WHITE":"\033[0m","BLUE":"\033[0m",
+        "TITLE":"\033[0m",
+    },
+}
+
+# runtime color vars (filled by apply_theme)
+RESET=CYAN=YELLOW=GREEN=RED=MAGENTA=WHITE=BLUE=TITLE=None
+USE_COLOR=True  # can be toggled in settings
+
+def apply_theme(name: str):
+    t = THEMES.get(name, THEMES["default"])
+    global RESET, CYAN, YELLOW, GREEN, RED, MAGENTA, WHITE, BLUE, TITLE
+    RESET=t["RESET"]; CYAN=t["CYAN"]; YELLOW=t["YELLOW"]; GREEN=t["GREEN"]
+    RED=t["RED"]; MAGENTA=t["MAGENTA"]; WHITE=t["WHITE"]; BLUE=t["BLUE"]
+    TITLE=t["TITLE"]
 
 def c(t, col): return f"{col}{t}{RESET}" if USE_COLOR else t
 
 def banner(title: str, root: Path):
     line = c("="*60, CYAN)
     print(line)
-    print(c(f"  {title}   ", CYAN), c(f"Root: {root}", WHITE))
+    print(c(f"  {title}   ", TITLE), c(f"Root: {root}", WHITE))
     print(line)
 
 def section(title: str):
@@ -52,12 +79,10 @@ DIR_CONFIG=ROOT/"config"; DIR_ARCHIVES=ROOT/"archives"; DIR_LOGS=ROOT/"logs"; DI
 FILE_APP_SETTINGS=DIR_CONFIG/"app-settings.json"; FILE_SITE_SETTINGS=DIR_CONFIG/"site-delays.json"
 GDL_OPTIONS_URL="https://github.com/mikf/gallery-dl/blob/master/docs/options.md"
 
-# Defaults for sites when not configured yet
 DEFAULT_DELAY=30
 DEFAULT_BASE_SLEEP=1
 DEFAULT_JITTER=1.0
 
-# Ctrl+C handling
 ABORT = {"want": False}
 def _sigint_handler(signum, frame):
     ABORT["want"] = True
@@ -98,16 +123,17 @@ def load_app_settings()->Dict:
     if "gallery_dl_path" not in s: s["gallery_dl_path"]=None
     if "global_extra_args" not in s: s["global_extra_args"]=""
     if "use_color" not in s: s["use_color"]=True
+    if "theme" not in s: s["theme"]="default"  # NEW
     s["global_extra_args"]=_normalize_args_to_string(s.get("global_extra_args",""))
     save_json(FILE_APP_SETTINGS, s)
-    # reflect color pref immediately
+    # reflect prefs
     global USE_COLOR; USE_COLOR = bool(s.get("use_color", True))
+    apply_theme(s.get("theme","default"))
     return s
 
 def get_sites()->List[str]: return sorted([p.stem for p in DIR_URL_LISTS.glob("*.txt")])
 
 def seed_site_defaults(site_cfg:Dict[str,Dict], sites:List[str])->bool:
-    """Seed defaults for any site not present. Returns True if changed."""
     changed=False
     for s in sites:
         if s not in site_cfg:
@@ -122,13 +148,11 @@ def seed_site_defaults(site_cfg:Dict[str,Dict], sites:List[str])->bool:
 
 def load_site_settings()->Dict[str,Dict]:
     s=load_json(FILE_SITE_SETTINGS, {}); changed=False
-    # Ensure all existing have needed keys; normalize extra args
     for site,cfg in list(s.items()):
         if "delay_between_urls_sec" not in cfg: cfg["delay_between_urls_sec"]=DEFAULT_DELAY; changed=True
         if "base_sleep_sec" not in cfg: cfg["base_sleep_sec"]=DEFAULT_BASE_SLEEP; changed=True
         if "jitter_sec" not in cfg: cfg["jitter_sec"]=DEFAULT_JITTER; changed=True
         extra=_normalize_args_to_string(cfg.get("extra_args",""))
-        # strip --sleep if using base sleep
         if cfg.get("base_sleep_sec", DEFAULT_BASE_SLEEP)>0 and extra:
             toks=shlex.split(extra); kept=[]; i=0
             while i<len(toks):
@@ -136,7 +160,6 @@ def load_site_settings()->Dict[str,Dict]:
                 kept.append(toks[i]); i+=1
             extra=" ".join(kept)
         if extra!=cfg.get("extra_args",""): cfg["extra_args"]=extra; changed=True
-    # Seed defaults for sites present in URL-Lists but not in config
     if seed_site_defaults(s, get_sites()): changed=True
     if changed: save_json(FILE_SITE_SETTINGS, s)
     return s
@@ -146,13 +169,11 @@ def read_site_urls(site:str)->List[str]:
     f=DIR_URL_LISTS/f"{site}.txt"
     if not f.exists(): return []
     lines=[ln.strip() for ln in f.read_text(encoding="utf-8", errors="ignore").splitlines()]
-    # Drop blanks, comments, and pure numbers (e.g., stray indices)
     urls=[ln for ln in lines if ln and not ln.lstrip().startswith("#") and not ln.isdigit()]
     return urls
 
 # ----------------------------- GALLERY-DL ----------------------------------
 def find_gallery_dl(app:Dict)->Tuple[Optional[str], Optional[str]]:
-    """Return (invocation, resolved_exe_path)."""
     path=app.get("gallery_dl_path")
     if path and Path(path.split()[0]).exists():
         exe = path.split()[0]
@@ -192,7 +213,6 @@ def latest_gallery_dl_version()->Optional[str]:
     except Exception: return None
 
 def matching_pip_for(invocation:str, resolved_path:str)->Optional[List[str]]:
-    """Return a pip command that upgrades gallery-dl in the SAME env as the invocation."""
     if invocation.startswith("python ") or invocation.startswith("py "):
         interp = invocation.split()[0]
         return [interp, "-m", "pip"]
@@ -330,7 +350,6 @@ def download_for_site(site:str, app:Dict, site_cfg:Dict[str,Dict], stats:RunStat
 
     site_stats={"attempted":0,"ok":0,"fail":0}
     for idx,url in enumerate(urls,1):
-        # Check Ctrl+C just before each URL
         act = _maybe_handle_sigint()
         if act == "abort": break
         if act == "skip": continue
@@ -346,7 +365,6 @@ def download_for_site(site:str, app:Dict, site_cfg:Dict[str,Dict], stats:RunStat
         if rc==0:
             stats.succeeded+=1; site_stats["ok"]+=1; print(c(f"[{now_ts()}] {site} [{idx}/{len(urls)}] OK in {elapsed:.1f}s", GREEN))
         elif rc==130:
-            # interrupted: ask again what to do
             act = _maybe_handle_sigint()
             if act == "abort":
                 break
@@ -354,7 +372,6 @@ def download_for_site(site:str, app:Dict, site_cfg:Dict[str,Dict], stats:RunStat
                 stats.failed+=1; site_stats["fail"]+=1; print(c(f"[{now_ts()}] {site} [{idx}/{len(urls)}] SKIPPED after Ctrl+C", YELLOW))
                 continue
             else:
-                # continue: retry same URL immediately
                 print(c("Retrying after Ctrl+C...", YELLOW))
                 rc=run_gallery_dl(invocation,url,dest,archive,load_app_settings().get("global_extra_args",""),site_args)
                 elapsed=time.time()-t0
@@ -396,7 +413,6 @@ def site_settings_menu():
         print(f"\nAdvanced: per-site extra gallery-dl args (see {GDL_OPTIONS_URL})")
         warn=" (note: --sleep here is ignored when base_sleep > 0)" if base_sleep>0 else ""
         extra=input_default(f"Args for {s}{warn}", str(cur.get("extra_args","")))
-        # normalize and strip if needed
         extra=_normalize_args_to_string(extra)
         if base_sleep>0 and extra:
             toks=shlex.split(extra); kept=[]; i=0
@@ -461,10 +477,12 @@ def make_backup_zip()->Path:
 
 def settings_menu():
     app = load_app_settings()
+    theme_order = ["default","bright","high_contrast","mono"]
     while True:
         clear_screen(); banner("Settings", ROOT)
         print(c(f"  1 – Site settings (per-site delay, base sleep ± jitter, extra args)", BLUE))
         print(c(f"  2 – Toggle menu colors (currently {'ON' if app.get('use_color', True) else 'OFF'})", BLUE))
+        print(c(f"  3 – Theme (current: {app.get('theme','default')})", BLUE))
         print(c("  0 – Back", BLUE))
         ch = prompt("Choose: ").strip()
         if ch == "1":
@@ -474,6 +492,14 @@ def settings_menu():
             save_json(FILE_APP_SETTINGS, app)
             global USE_COLOR; USE_COLOR = app["use_color"]
             print(f"Colors are now {'ON' if USE_COLOR else 'OFF'}."); input("Enter to continue...")
+        elif ch == "3":
+            cur = app.get("theme","default")
+            idx = (theme_order.index(cur) + 1) % len(theme_order) if cur in theme_order else 0
+            new = theme_order[idx]
+            app["theme"] = new
+            save_json(FILE_APP_SETTINGS, app)
+            apply_theme(new)
+            print(f"Theme set to: {new}"); input("Enter to continue...")
         elif ch == "0":
             return
 

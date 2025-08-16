@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.0.1 (2025-08-16)
+- Added theme presets (default, bright, high_contrast, mono) and theme picker in Settings.
+- Persist theme in `config/app-settings.json`.
+- Minor polishing of menus; all v1.0 features retained.
+
 ## v1.0 (2025-08-16)
 Initial public release.
 
