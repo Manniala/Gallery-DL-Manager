@@ -1,0 +1,3 @@
+https://site.com/portrait
+https://site.com/landscape
+https://site.com/macro
