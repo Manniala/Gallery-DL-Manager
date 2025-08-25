@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Gallery-DL Manager v1.0.1
-- NEW: Theme support (default, bright, high_contrast, mono) + persisted in config
-- Settings menu: pick theme and toggle color on/off
-- All v1.0 features retained: Ctrl+C Abort/Skip/Continue, CMD titles, defaults, updater, etc.
+Gallery-DL Manager v1.0.2
+- NEW: Sleep mode 'item' → Base sleep ± Jitter is passed as --sleep low-high to gallery-dl (per-file random sleep)
+- Validation: in Settings, if Jitter > Base and mode=item, it re-prompts (prevents negative ranges)
+- Lines starting with '#', '-', '*' in URL-Lists are ignored (in addition to blanks/numbers)
+- All v1.0.1 features retained: themes, color toggle, Ctrl+C menu, CMD titles, updater,
+  backups, links builder, per-site settings, run logs, etc.
 """
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 
 APP_NAME = "Gallery-DL Manager"
-APP_VERSION = "v1.0.1"
+APP_VERSION = "v1.0.2"
 
 # ----------------------------- THEMES & UI ---------------------------------
 THEMES = {
@@ -123,7 +125,7 @@ def load_app_settings()->Dict:
     if "gallery_dl_path" not in s: s["gallery_dl_path"]=None
     if "global_extra_args" not in s: s["global_extra_args"]=""
     if "use_color" not in s: s["use_color"]=True
-    if "theme" not in s: s["theme"]="default"  # NEW
+    if "theme" not in s: s["theme"]="default"
     s["global_extra_args"]=_normalize_args_to_string(s.get("global_extra_args",""))
     save_json(FILE_APP_SETTINGS, s)
     # reflect prefs
@@ -141,6 +143,7 @@ def seed_site_defaults(site_cfg:Dict[str,Dict], sites:List[str])->bool:
                 "delay_between_urls_sec": DEFAULT_DELAY,
                 "base_sleep_sec": DEFAULT_BASE_SLEEP,
                 "jitter_sec": DEFAULT_JITTER,
+                "sleep_mode": "url",        # NEW (url | item)
                 "extra_args": ""
             }
             changed=True
@@ -152,8 +155,10 @@ def load_site_settings()->Dict[str,Dict]:
         if "delay_between_urls_sec" not in cfg: cfg["delay_between_urls_sec"]=DEFAULT_DELAY; changed=True
         if "base_sleep_sec" not in cfg: cfg["base_sleep_sec"]=DEFAULT_BASE_SLEEP; changed=True
         if "jitter_sec" not in cfg: cfg["jitter_sec"]=DEFAULT_JITTER; changed=True
+        if "sleep_mode" not in cfg: cfg["sleep_mode"]="url"; changed=True  # NEW
         extra=_normalize_args_to_string(cfg.get("extra_args",""))
-        if cfg.get("base_sleep_sec", DEFAULT_BASE_SLEEP)>0 and extra:
+        # If base sleep > 0 and mode=url, strip any --sleep from extra args (avoid double sleeping)
+        if cfg.get("base_sleep_sec", DEFAULT_BASE_SLEEP)>0 and cfg.get("sleep_mode","url")=="url" and extra:
             toks=shlex.split(extra); kept=[]; i=0
             while i<len(toks):
                 if toks[i]=="--sleep" and i+1<len(toks): i+=2; continue
@@ -169,7 +174,8 @@ def read_site_urls(site:str)->List[str]:
     f=DIR_URL_LISTS/f"{site}.txt"
     if not f.exists(): return []
     lines=[ln.strip() for ln in f.read_text(encoding="utf-8", errors="ignore").splitlines()]
-    urls=[ln for ln in lines if ln and not ln.lstrip().startswith("#") and not ln.isdigit()]
+    # Skip blanks, comments, disabled markers, and stray numeric indices
+    urls=[ln for ln in lines if ln and not ln.lstrip().startswith(("#","-","*")) and not ln.isdigit()]
     return urls
 
 # ----------------------------- GALLERY-DL ----------------------------------
@@ -213,7 +219,7 @@ def latest_gallery_dl_version()->Optional[str]:
     except Exception: return None
 
 def matching_pip_for(invocation:str, resolved_path:str)->Optional[List[str]]:
-    if invocation.startswith("python ") or invocation.startswith("py "):
+    if invocation and (invocation.startswith("python ") or invocation.startswith("py ")):
         interp = invocation.split()[0]
         return [interp, "-m", "pip"]
     if resolved_path:
@@ -334,11 +340,38 @@ def _maybe_handle_sigint():
 def download_for_site(site:str, app:Dict, site_cfg:Dict[str,Dict], stats:RunStats):
     urls=read_site_urls(site)
     if not urls: print(f"No URLs for {site}."); return
-    cfg=site_cfg.get(site, {"delay_between_urls_sec":DEFAULT_DELAY,"base_sleep_sec":DEFAULT_BASE_SLEEP,"jitter_sec":DEFAULT_JITTER,"extra_args":""})
+    cfg=site_cfg.get(site, {"delay_between_urls_sec":DEFAULT_DELAY,"base_sleep_sec":DEFAULT_BASE_SLEEP,"jitter_sec":DEFAULT_JITTER,"sleep_mode":"url","extra_args":""})
     per_url_delay=int(cfg.get("delay_between_urls_sec", DEFAULT_DELAY))
     base_sleep=int(cfg.get("base_sleep_sec", DEFAULT_BASE_SLEEP))
     jitter=float(cfg.get("jitter_sec", DEFAULT_JITTER))
+    sleep_mode=str(cfg.get("sleep_mode","url")).lower().strip()
     site_args=_normalize_args_to_string(cfg.get("extra_args",""))
+
+    # If user chooses per-item sleep, inject gallery-dl --sleep range and disable manager's pre-URL sleep
+    if sleep_mode == "item":
+        low = max(0.0, base_sleep - jitter)
+        high = base_sleep + jitter
+        # Validate (negative handled via clamp; additionally warn if base<jitter)
+        if base_sleep < jitter:
+            print(c(f"Warning: base_sleep({base_sleep}) < jitter({jitter}) → using 0.00-{high:.2f}s", YELLOW))
+        # Remove any existing --sleep from extra args to avoid duplicates
+        if site_args:
+            toks = shlex.split(site_args); kept=[]; i=0
+            while i < len(toks):
+                if toks[i] == "--sleep" and i+1 < len(toks):
+                    i += 2
+                    continue
+                kept.append(toks[i]); i += 1
+            site_args = " ".join(kept).strip()
+        # Inject our per-item sleep
+        if abs(high - low) < 1e-6:
+            site_args = (site_args + f" --sleep {low:.2f}").strip()
+            print(f"  \u2192 Per-item sleep via gallery-dl: {low:.2f}s")
+        else:
+            site_args = (site_args + f" --sleep {low:.2f}-{high:.2f}").strip()
+            print(f"  \u2192 Per-item sleep via gallery-dl: {low:.2f}-{high:.2f}s")
+        # Disable manager's pre-URL sleep
+        base_sleep = 0
 
     invocation, resolved=find_gallery_dl(app)
     if not invocation: print(c("gallery-dl not found. Use menu option to install/check.", RED)); return
@@ -355,7 +388,7 @@ def download_for_site(site:str, app:Dict, site_cfg:Dict[str,Dict], stats:RunStat
         if act == "skip": continue
 
         s=compute_sleep(base_sleep, jitter)
-        if s>0: print(f"  → Sleeping {s:.2f}s before URL {idx}/{len(urls)}"); time.sleep(s)
+        if s>0: print(f"  \u2192 Sleeping {s:.2f}s before URL {idx}/{len(urls)}"); time.sleep(s)
 
         t0=time.time(); set_console_title(f"{APP_NAME} {APP_VERSION} · {site} · {idx}/{len(urls)}")
         print(f"[{now_ts()}] {site} [{idx}/{len(urls)}] START: {url}")
@@ -383,7 +416,7 @@ def download_for_site(site:str, app:Dict, site_cfg:Dict[str,Dict], stats:RunStat
             stats.failed+=1; site_stats["fail"]+=1; print(c(f"[{now_ts()}] {site} [{idx}/{len(urls)}] FAIL rc={rc} in {elapsed:.1f}s", RED))
 
         if per_url_delay>0 and idx<len(urls):
-            print(f"  → Inter-URL delay {per_url_delay}s"); time.sleep(per_url_delay)
+            print(f"  \u2192 Inter-URL delay {per_url_delay}s"); time.sleep(per_url_delay)
 
     stats.per_site[site]=site_stats
     set_console_title(f"{APP_NAME} {APP_VERSION}")
@@ -395,10 +428,10 @@ def site_settings_menu():
     if not sites: print("No sites yet. Add *.txt to URL-Lists/"); return
     cfg=load_site_settings()
     while True:
-        clear_screen(); banner("Site settings (delay, base sleep ± jitter, extra args)", ROOT)
+        clear_screen(); banner("Site settings (delay, base sleep ± jitter, sleep mode, extra args)", ROOT)
         for i,s in enumerate(sites,1):
-            csite=cfg.get(s, {"delay_between_urls_sec":DEFAULT_DELAY,"base_sleep_sec":DEFAULT_BASE_SLEEP})
-            print(c(f"  {i} – {s} [delay_between_urls={csite.get('delay_between_urls_sec',DEFAULT_DELAY)}s, base_sleep={csite.get('base_sleep_sec',DEFAULT_BASE_SLEEP)}s]", BLUE))
+            csite=cfg.get(s, {"delay_between_urls_sec":DEFAULT_DELAY,"base_sleep_sec":DEFAULT_BASE_SLEEP,"sleep_mode":"url"})
+            print(c(f"  {i} – {s} [delay_between_urls={csite.get('delay_between_urls_sec',DEFAULT_DELAY)}s, base_sleep={csite.get('base_sleep_sec',DEFAULT_BASE_SLEEP)}s, mode={csite.get('sleep_mode','url')}]", BLUE))
         print(c("  0 – Back", BLUE))
         try: ch=int(prompt("Choose: ").strip() or "0")
         except Exception: return
@@ -406,21 +439,37 @@ def site_settings_menu():
         idx=ch-1
         if not (0<=idx<len(sites)): continue
         s=sites[idx]
-        cur=cfg.get(s, {"delay_between_urls_sec":DEFAULT_DELAY,"base_sleep_sec":DEFAULT_BASE_SLEEP,"jitter_sec":DEFAULT_JITTER,"extra_args":""})
+        cur=cfg.get(s, {"delay_between_urls_sec":DEFAULT_DELAY,"base_sleep_sec":DEFAULT_BASE_SLEEP,"jitter_sec":DEFAULT_JITTER,"sleep_mode":"url","extra_args":""})
         delay=int(input_default(f"Delay between URLs for {s} in seconds", str(cur.get("delay_between_urls_sec", DEFAULT_DELAY))))
         base_sleep=int(input_default(f"Base sleep seconds for {s} (randomized ±1s)", str(cur.get("base_sleep_sec", DEFAULT_BASE_SLEEP))))
-        jitter=float(input_default(f"Jitter seconds (±) for {s}", str(cur.get("jitter_sec", DEFAULT_JITTER))))
+        # sleep mode
+        cur_mode = cur.get("sleep_mode","url")
+        mode = input_default(f"Sleep mode for {s} ('url' or 'item')", cur_mode).strip().lower()
+        if mode not in ("url","item"): mode = "url"
+        # jitter with validation when mode=item
+        while True:
+            jitter_str = input_default(f"Jitter seconds (±) for {s}", str(cur.get("jitter_sec", DEFAULT_JITTER)))
+            try:
+                jitter = float(jitter_str)
+            except Exception:
+                print(c("Invalid number. Try again.", RED)); continue
+            if mode == "item" and jitter > base_sleep:
+                print(c("Jitter cannot exceed Base sleep in item mode (no negative ranges). Try again.", RED))
+                continue
+            break
         print(f"\nAdvanced: per-site extra gallery-dl args (see {GDL_OPTIONS_URL})")
-        warn=" (note: --sleep here is ignored when base_sleep > 0)" if base_sleep>0 else ""
+        warn=" (note: --sleep here is ignored when base_sleep>0 in url mode or when mode=item, since manager injects it)"
         extra=input_default(f"Args for {s}{warn}", str(cur.get("extra_args","")))
         extra=_normalize_args_to_string(extra)
-        if base_sleep>0 and extra:
+        # strip --sleep if we will handle sleeping ourselves (either base>0 in url mode, or item mode)
+        will_inject = (mode=="item") or (base_sleep>0 and mode=="url")
+        if will_inject and extra:
             toks=shlex.split(extra); kept=[]; i=0
             while i<len(toks):
                 if toks[i]=="--sleep" and i+1<len(toks): i+=2; continue
                 kept.append(toks[i]); i+=1
             extra=" ".join(kept)
-        cfg[s]={"delay_between_urls_sec":delay,"base_sleep_sec":base_sleep,"jitter_sec":jitter,"extra_args":extra}
+        cfg[s]={"delay_between_urls_sec":delay,"base_sleep_sec":base_sleep,"jitter_sec":jitter,"sleep_mode":mode,"extra_args":extra}
         save_json(FILE_SITE_SETTINGS, cfg)
         print(c("Saved.", GREEN)); input("Enter to continue...")
 
@@ -480,7 +529,7 @@ def settings_menu():
     theme_order = ["default","bright","high_contrast","mono"]
     while True:
         clear_screen(); banner("Settings", ROOT)
-        print(c(f"  1 – Site settings (per-site delay, base sleep ± jitter, extra args)", BLUE))
+        print(c(f"  1 – Site settings (per-site delay, base sleep ± jitter, sleep mode, extra args)", BLUE))
         print(c(f"  2 – Toggle menu colors (currently {'ON' if app.get('use_color', True) else 'OFF'})", BLUE))
         print(c(f"  3 – Theme (current: {app.get('theme','default')})", BLUE))
         print(c("  0 – Back", BLUE))
