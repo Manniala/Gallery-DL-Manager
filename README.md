@@ -22,6 +22,8 @@ and a simple Windows launcher.
 - `MG_DEBUG=1`: prints full `gallery-dl` command lines
 - **Per-site download archive (.sqlite)**: prevents re-downloading previously fetched items—even if you delete files later. One archive per site lives under `archives/`. Backed up by the built-in Backup command.
 
+📘 **For a step-by-step walkthrough, see [GUIDE.md](GUIDE.md).**
+
 ### Sleep modes
 - **`url` mode** (default): Manager sleeps **before each URL** in your `URL-Lists/<site>.txt`.
 - **`item` mode**: Manager injects gallery-dl `--sleep <low>-<high>` based on **Base ± Jitter**, so gallery-dl pauses **between files** with a fresh random delay each time.  
@@ -46,10 +48,6 @@ and a simple Windows launcher.
 
 If you have multiple `gallery-dl` installs, use **Check/Install** →  
 **Set explicit gallery-dl command/path**, e.g., `python -m gallery_dl`.
-
-## URL-Lists tips
-- Lines starting with `#`, `-`, or `*` are skipped (easy way to disable entries without deleting them).
-- Blank lines and pure numbers are ignored.
 
 ## Folder Layout
 ```
