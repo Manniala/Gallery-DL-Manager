@@ -1,4 +1,4 @@
-# Gallery-DL Manager (v1.0.1)
+# Gallery-DL Manager (v1.0.2)
 
 A friendly, menu-driven companion for [gallery-dl](https://github.com/mikf/gallery-dl).
 It adds per-site settings (delay/base sleep/jitter/extra args), health checks,
@@ -6,7 +6,12 @@ backups (including archives), run stats, update checks (with matching Python env
 and a simple Windows launcher.
 
 ## Features
-- NEW: **Theme** support (default, bright, high_contrast, mono) + color toggle
+- NEW: **Sleep modes** per site:
+  - `url`: sleep before each URL entry (manager-controlled).
+  - `item`: converts **Base sleep ± Jitter** into gallery-dl `--sleep low-high` so **every file** gets a new randomized delay.
+- NEW: **Disable lines in URL-Lists** by starting a line with `#`, `-`, or `*` (besides blank lines and numeric indices).
+- NEW: **Validation** in Settings: prevents negative per-item ranges (Jitter > Base is disallowed in `item` mode).
+- **Theme** support (default, bright, high_contrast, mono) + color toggle
 - Per-site settings with sensible defaults (delay=30s, base sleep=1s, jitter=±1s)
 - Randomized sleeps (base ± jitter), auto-removes `--sleep` in extra args to avoid double sleeps
 - Health checks before “Download ALL” (empty list, DNS resolution)
@@ -16,6 +21,11 @@ and a simple Windows launcher.
 - Ctrl+C: Abort/Skip/Continue without killing the whole batch window
 - `MG_DEBUG=1`: prints full `gallery-dl` command lines
 - **Per-site download archive (.sqlite)**: prevents re-downloading previously fetched items—even if you delete files later. One archive per site lives under `archives/`. Backed up by the built-in Backup command.
+
+### Sleep modes
+- **`url` mode** (default): Manager sleeps **before each URL** in your `URL-Lists/<site>.txt`.
+- **`item` mode**: Manager injects gallery-dl `--sleep <low>-<high>` based on **Base ± Jitter**, so gallery-dl pauses **between files** with a fresh random delay each time.  
+  Example: Base `5` + Jitter `2` → `--sleep 3.00-7.00`.
 
 ### How the download archive works
 - Each site uses its own SQLite archive in `archives/<site>.sqlite`.
@@ -36,6 +46,10 @@ and a simple Windows launcher.
 
 If you have multiple `gallery-dl` installs, use **Check/Install** →  
 **Set explicit gallery-dl command/path**, e.g., `python -m gallery_dl`.
+
+## URL-Lists tips
+- Lines starting with `#`, `-`, or `*` are skipped (easy way to disable entries without deleting them).
+- Blank lines and pure numbers are ignored.
 
 ## Folder Layout
 ```

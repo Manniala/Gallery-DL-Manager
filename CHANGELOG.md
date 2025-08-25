@@ -1,12 +1,20 @@
 # Changelog
 
+## v1.0.2 (2025-08-19)
+- Added **Sleep modes** per site:
+  - `url`: sleep before each URL (existing behavior).
+  - `item`: injects gallery-dl `--sleep <low>-<high>` from Base ± Jitter for **per-file** randomized delays.
+- Added **validation**: disallow Jitter > Base in `item` mode to avoid negative ranges.
+- Added **disabled lines** in URL-Lists: lines starting with `#`, `-`, or `*` are skipped (plus blanks and numeric indices).
+- Minor UI copy updates to show the new mode and injected per-item sleep range in logs.
+
 ## v1.0.1 (2025-08-16)
-- Added theme presets (default, bright, high_contrast, mono) and theme picker in Settings.
+- Added Theme presets (default, bright, high_contrast, mono) and persisted theme in config.
 - Persist theme in `config/app-settings.json`.
 - Minor polishing of menus; all v1.0 features retained.
 
 ## v1.0 (2025-08-16)
-Initial public release.
+- Initial public release.
 
 ### Highlights
 - Per-site settings (delay, base sleep ± jitter, extra args)
